@@ -37,16 +37,6 @@ const landingThemeToggleBtn = $('landing-theme-toggle');
 const landingSignupBtn = $('landing-signup-btn');
 const heroCtaBtn = $('hero-cta-btn');
 const authBackBtn = $('auth-back-btn');
-const authForm = $('auth-form');
-const authTitle = authSection.querySelector('h2');
-const authSubtitle = $('auth-subtitle');
-const groupName = $('group-name');
-const authToggleBtn = $('auth-toggle-btn');
-const authToggleText = $('auth-toggle-text');
-const authBtnText = $('auth-btn-text');
-const authSpinner = $('auth-spinner');
-const authSubmitBtn = $('auth-submit-btn');
-const emailVerifyMsg = $('email-verify-msg');
 const sidebarProfile = document.querySelector('.sidebar-profile');
 const form = $('transaction-form');
 const recentList = $('recent-transactions');
@@ -81,6 +71,16 @@ function hideLoader() {
   setTimeout(() => appLoader.style.display = 'none', 400);
 }
 
+function handleGoogleCredential(response) {
+  const result = AuthService.googleLogin(response.credential);
+  if (result.ok) {
+    showApp(result.user);
+    toast('Signed in with Google!', 'success');
+  } else {
+    toast('Google sign-in failed. Please try again.', 'error');
+  }
+}
+
 function showApp(user) {
   currentUser = user;
   landingSection.style.display = 'none';
@@ -88,7 +88,12 @@ function showApp(user) {
   appSection.style.display = 'block';
   $('profile-name').textContent = user.name || 'User';
   $('profile-email').textContent = user.email;
-  $('profile-avatar-initial').textContent = (user.name || user.email).charAt(0).toUpperCase();
+  const avatarEl = $('profile-avatar-initial');
+  if (user.picture) {
+    avatarEl.innerHTML = `<img src="${user.picture}" alt="${user.name}" referrerpolicy="no-referrer" />`;
+  } else {
+    avatarEl.textContent = (user.name || user.email).charAt(0).toUpperCase();
+  }
   transactions = DB.getTransactions(user.uid);
   budget = DB.getBudget(user.uid);
   refreshAll();
@@ -101,70 +106,17 @@ function showLanding() {
   landingSection.style.display = 'flex';
 }
 
-function showAuth(mode = 'login') {
+function showAuth() {
   currentUser = null;
   appSection.style.display = 'none';
   landingSection.style.display = 'none';
   authSection.style.display = 'flex';
-  
-  if ((mode === 'login' && !isLoginMode) || (mode === 'signup' && isLoginMode)) {
-      authToggleBtn.click();
-  }
 }
 
 if(landingThemeToggleBtn) landingThemeToggleBtn.addEventListener('click', toggleTheme);
-if(landingSignupBtn) landingSignupBtn.addEventListener('click', () => showAuth('signup'));
-if(heroCtaBtn) heroCtaBtn.addEventListener('click', () => showAuth('signup'));
+if(landingSignupBtn) landingSignupBtn.addEventListener('click', () => showAuth());
+if(heroCtaBtn) heroCtaBtn.addEventListener('click', () => showAuth());
 if(authBackBtn) authBackBtn.addEventListener('click', () => showLanding());
-
-authToggleBtn.addEventListener('click', () => {
-  isLoginMode = !isLoginMode;
-  emailVerifyMsg.style.display = 'none';
-  if (isLoginMode) {
-    authTitle.textContent = 'FinanceFlow'; authSubtitle.textContent = 'Sign in to your account';
-    groupName.style.display = 'none'; authBtnText.textContent = 'Sign In';
-    authToggleText.textContent = "Don't have an account?"; authToggleBtn.textContent = 'Create one';
-  } else {
-    authTitle.textContent = 'Create Account'; authSubtitle.textContent = 'Join FinanceFlow today';
-    groupName.style.display = 'block'; authBtnText.textContent = 'Sign Up';
-    authToggleText.textContent = 'Already have an account?'; authToggleBtn.textContent = 'Sign In';
-  }
-});
-
-authForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const email = $('auth-email').value.trim();
-  const password = $('auth-password').value;
-  const remember = $('auth-remember').checked;
-  const name = $('auth-name').value.trim();
-
-  if (!email || !password || (!isLoginMode && !name)) { toast('Please fill in all required fields', 'error'); return; }
-
-  authSubmitBtn.disabled = true;
-  authBtnText.style.opacity = '0';
-  authSpinner.style.display = 'block';
-
-  setTimeout(() => {
-    let result;
-    if (isLoginMode) {
-      result = AuthService.login(email, password, remember);
-      if (result.ok) { toast('Welcome back, ' + result.user.name + '!', 'success'); showApp(result.user); }
-      else toast(result.error, 'error');
-    } else {
-      result = AuthService.signup(name, email, password);
-      if (result.ok) {
-        toast('Account created successfully! You can now sign in.', 'success');
-        emailVerifyMsg.style.display = 'block';
-        isLoginMode = true; authToggleBtn.click();
-      } else toast(result.error, 'error');
-    }
-    authSubmitBtn.disabled = false;
-    authBtnText.style.opacity = '1';
-    authSpinner.style.display = 'none';
-  }, 600);
-});
-
-$('btn-resend-verify').addEventListener('click', () => toast('Verification reminder noted!', 'success'));
 
 $('btn-logout').addEventListener('click', () => {
   AuthService.logout(); sidebarProfile.classList.remove('open');

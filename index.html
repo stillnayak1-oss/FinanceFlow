@@ -17,6 +17,9 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
     <!-- Stylesheet -->
     <link rel="stylesheet" href="style.css">
 </head>
@@ -123,39 +126,18 @@
                         <h2>FinanceFlow</h2>
                         <p id="auth-subtitle">Sign in to your account</p>
                     </div>
-            <form id="auth-form" novalidate>
-                <div class="form-group" id="group-name" style="display: none;">
-                    <label for="auth-name">Full Name</label>
-                    <input type="text" id="auth-name" placeholder="John Doe">
+                <div id="g_id_onload"
+                     data-client_id="504566084383-dl4qu0m8ous2mt0bdk2dkj4fv0nm3795.apps.googleusercontent.com"
+                     data-callback="handleGoogleCredential"
+                     data-auto_prompt="false">
                 </div>
-                <div class="form-group">
-                    <label for="auth-email">Email Address</label>
-                    <input type="email" id="auth-email" placeholder="you@example.com" required>
-                </div>
-                <div class="form-group">
-                    <label for="auth-password">Password</label>
-                    <input type="password" id="auth-password" placeholder="••••••••" required minlength="6">
-                </div>
-                <div class="form-options">
-                    <label class="remember-me">
-                        <input type="checkbox" id="auth-remember" checked>
-                        <span>Remember me</span>
-                    </label>
-                </div>
-                <button type="submit" class="btn btn-primary" id="auth-submit-btn">
-                    <span id="auth-btn-text">Sign In</span>
-                    <div class="spinner-small" id="auth-spinner" style="display: none;"></div>
-                </button>
-            </form>
-            <div class="auth-toggle">
-                <span id="auth-toggle-text">Don't have an account?</span>
-                <button type="button" class="btn-text" id="auth-toggle-btn">Create one</button>
-            </div>
-            
-                <div id="email-verify-msg" class="email-verify-msg" style="display: none;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-                    <p>A verification email has been sent to your address. Please verify to continue.</p>
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-resend-verify">Resend Email</button>
+                <div class="g_id_signin"
+                     data-type="standard"
+                     data-size="large"
+                     data-theme="outline"
+                     data-text="continue_with"
+                     data-shape="rectangular"
+                     data-width="360">
                 </div>
             </div>
         </div>

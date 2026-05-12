@@ -5,32 +5,6 @@ const AuthService = (() => {
 
   function getUsers() { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); }
   function saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
-  function hashPassword(p) {
-    let h = 0; for (let i = 0; i < p.length; i++) { h = ((h << 5) - h) + p.charCodeAt(i); h |= 0; }
-    return 'h_' + Math.abs(h).toString(36);
-  }
-
-  function signup(name, email, password) {
-    const users = getUsers();
-    if (users[email]) return { ok: false, error: 'Email is already registered' };
-    if (password.length < 6) return { ok: false, error: 'Password must be at least 6 characters' };
-    if (!email.includes('@')) return { ok: false, error: 'Invalid email address' };
-    const uid = 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    users[email] = { uid, name, email, passwordHash: hashPassword(password), createdAt: new Date().toISOString() };
-    saveUsers(users);
-    return { ok: true, user: { uid, name, email } };
-  }
-
-  function login(email, password, remember) {
-    const users = getUsers();
-    const u = users[email];
-    if (!u || u.passwordHash !== hashPassword(password)) return { ok: false, error: 'Invalid email or password' };
-    const session = { uid: u.uid, name: u.name, email: u.email, remember };
-    if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    return { ok: true, user: { uid: u.uid, name: u.name, email: u.email } };
-  }
-
   function logout() { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); }
 
   function getSession() {
@@ -38,7 +12,32 @@ const AuthService = (() => {
     return s ? JSON.parse(s) : null;
   }
 
-  return { signup, login, logout, getSession };
+  function googleLogin(credential) {
+    try {
+      const payload = JSON.parse(atob(credential.split('.')[1]));
+      const { sub: googleId, name, email, picture } = payload;
+      const users = getUsers();
+      let u = users[email];
+      
+      if (!u) {
+        const uid = 'g_' + googleId;
+        u = { uid, name, email, picture, passwordHash: null, provider: 'google', createdAt: new Date().toISOString() };
+        users[email] = u;
+        saveUsers(users);
+      } else if (!u.picture && picture) {
+        u.picture = picture;
+        saveUsers(users);
+      }
+      
+      const session = { uid: u.uid, name: u.name, email: u.email, picture: u.picture, remember: true };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      return { ok: true, user: session };
+    } catch (e) {
+      return { ok: false, error: 'Failed to process Google login' };
+    }
+  }
+
+  return { logout, getSession, googleLogin };
 })();
 
 /* FinanceFlow — Local Database */
