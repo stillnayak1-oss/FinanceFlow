@@ -11,6 +11,49 @@ let isLoginMode = true;
 const $ = id => document.getElementById(id);
 const fmt = n => '₹' + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+// Backend API base URL (adjust if needed)
+const API_URL = 'http://localhost:3000';
+
+// Helper functions to interact with the MySQL API
+async function fetchTransactions(uid) {
+  const res = await fetch(`${API_URL}/transactions/${uid}`);
+  if (!res.ok) {
+    console.error('Failed to fetch transactions');
+    return [];
+  }
+  return await res.json();
+}
+
+async function saveTransactions(uid, txns) {
+  const res = await fetch(`${API_URL}/transactions/${uid}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(txns)
+  });
+  if (!res.ok) console.error('Failed to save transactions');
+  return res.ok;
+}
+
+async function fetchBudget(uid) {
+  const res = await fetch(`${API_URL}/budget/${uid}`);
+  if (!res.ok) {
+    console.error('Failed to fetch budget');
+    return 0;
+  }
+  const data = await res.json();
+  return data.amount ?? 0;
+}
+
+async function saveBudget(uid, amount) {
+  const res = await fetch(`${API_URL}/budget/${uid}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount })
+  });
+  if (!res.ok) console.error('Failed to save budget');
+  return res.ok;
+}
 const catIcons = {
   Salary:'<i data-lucide="wallet" class="cat-lucide"></i>',
   Freelance:'<i data-lucide="laptop" class="cat-lucide"></i>',
@@ -81,7 +124,23 @@ function handleGoogleCredential(response) {
   }
 }
 
-function showApp(user) {
+async function showApp(user) {
+  currentUser = user;
+  landingSection.style.display = 'none';
+  authSection.style.display = 'none';
+  appSection.style.display = 'block';
+  $('profile-name').textContent = user.name || 'User';
+  $('profile-email').textContent = user.email;
+  const avatarEl = $('profile-avatar-initial');
+  if (user.picture) {
+    avatarEl.innerHTML = `<img src="${user.picture}" alt="${user.name}" referrerpolicy="no-referrer" />`;
+  } else {
+    avatarEl.textContent = (user.name || user.email).charAt(0).toUpperCase();
+  }
+  transactions = await fetchTransactions(user.uid);
+  budget = await fetchBudget(user.uid);
+  refreshAll();
+}
   currentUser = user;
   landingSection.style.display = 'none';
   authSection.style.display = 'none';
@@ -127,8 +186,8 @@ $('profile-dropdown-btn').addEventListener('click', (e) => { e.stopPropagation()
 document.addEventListener('click', (e) => { if (!sidebarProfile.contains(e.target)) sidebarProfile.classList.remove('open'); });
 
 // ===== DATA HELPERS =====
-function saveData() { if (currentUser) DB.saveTransactions(currentUser.uid, transactions); }
-function saveBudgetData() { if (currentUser) DB.saveBudget(currentUser.uid, budget); }
+async function saveData() { if (currentUser) await saveTransactions(currentUser.uid, transactions); }
+async function saveBudgetData() { if (currentUser) await saveBudget(currentUser.uid, budget); }
 
 // ===== FORM VALIDATION =====
 function validate() {
