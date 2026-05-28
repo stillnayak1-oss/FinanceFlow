@@ -1,60 +1,224 @@
-/* FinanceFlow — Local Auth System */
+/* =============================================
+   FinanceFlow — Firebase Auth & Firestore DB
+   ============================================= */
+
+// ─── Firebase Configuration ───────────────────────────────────────
+// Replace these values with your own Firebase project config from:
+// https://console.firebase.google.com → Project Settings → General → Your apps → Web app
+const firebaseConfig = {
+  apiKey: "AIzaSyA0dLpHb4_2UQCd-ch32mEtQSnFEGaljCA",
+  authDomain: "financeflow-2d6b0.firebaseapp.com",
+  projectId: "financeflow-2d6b0",
+  storageBucket: "financeflow-2d6b0.firebasestorage.app",
+  messagingSenderId: "1069390685325",
+  appId: "1:1069390685325:web:80885aa5e8d6b7a5816ec4",
+  measurementId: "G-CXNQ6YZ1MD"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// Use Google as auth provider
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+// ─── AuthService ──────────────────────────────────────────────────
 const AuthService = (() => {
-  const USERS_KEY = 'ff_users';
-  const SESSION_KEY = 'ff_session';
 
-  function getUsers() { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); }
-  function saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
-  function logout() { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); }
-
-  function getSession() {
-    const s = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-    return s ? JSON.parse(s) : null;
-  }
-
-  function googleLogin(credential) {
+  /**
+   * Sign in with Google via popup
+   * @returns {Promise<{ok: boolean, user?: object, error?: string}>}
+   */
+  async function googleLogin() {
     try {
-      const base64Url = credential.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-      
-      const payload = JSON.parse(jsonPayload);
-      const { sub: googleId, name, email, picture } = payload;
-      const users = getUsers();
-      let u = users[email];
-      
-      if (!u) {
-        const uid = 'g_' + googleId;
-        u = { uid, name, email, picture, passwordHash: null, provider: 'google', createdAt: new Date().toISOString() };
-        users[email] = u;
-        saveUsers(users);
-      } else if (!u.picture && picture) {
-        u.picture = picture;
-        saveUsers(users);
-      }
-      
-      const session = { uid: u.uid, name: u.name, email: u.email, picture: u.picture, remember: true };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      const result = await auth.signInWithPopup(googleProvider);
+      const u = result.user;
+      const session = {
+        uid: u.uid,
+        name: u.displayName || 'User',
+        email: u.email,
+        picture: u.photoURL
+      };
       return { ok: true, user: session };
     } catch (e) {
-      return { ok: false, error: 'Failed to process Google login' };
+      console.error('Google sign-in failed:', e);
+      return { ok: false, error: e.message || 'Failed to sign in with Google' };
     }
   }
 
-  return { logout, getSession, googleLogin };
+  /**
+   * Sign out of Firebase
+   */
+  async function logout() {
+    try {
+      await auth.signOut();
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
+  }
+
+  /**
+   * Get the current signed-in user (synchronous snapshot)
+   * @returns {object|null} session-like object or null
+   */
+  function getSession() {
+    const u = auth.currentUser;
+    if (!u) return null;
+    return {
+      uid: u.uid,
+      name: u.displayName || 'User',
+      email: u.email,
+      picture: u.photoURL
+    };
+  }
+
+  /**
+   * Register a callback for auth state changes
+   * @param {Function} callback — receives session object or null
+   * @returns {Function} unsubscribe function
+   */
+  function onAuthChange(callback) {
+    return auth.onAuthStateChanged(user => {
+      if (user) {
+        callback({
+          uid: user.uid,
+          name: user.displayName || 'User',
+          email: user.email,
+          picture: user.photoURL
+        });
+      } else {
+        callback(null);
+      }
+    });
+  }
+
+  return { googleLogin, logout, getSession, onAuthChange };
 })();
 
-/* FinanceFlow — Local Database */
+// ─── DB (Firestore) ──────────────────────────────────────────────
+// Data model:
+//   users/{uid}/transactions/{txnId}  → { title, amount, type, category, date, createdAt, updatedAt }
+//   users/{uid}/budget/current         → { amount, updatedAt }
 const DB = (() => {
-  function txnKey(uid) { return `ff_txns_${uid}`; }
-  function budgetKey(uid) { return `ff_budget_${uid}`; }
 
-  function getTransactions(uid) { return JSON.parse(localStorage.getItem(txnKey(uid)) || '[]'); }
-  function saveTransactions(uid, txns) { localStorage.setItem(txnKey(uid), JSON.stringify(txns)); }
-  function getBudget(uid) { return JSON.parse(localStorage.getItem(budgetKey(uid)) || '0'); }
-  function saveBudget(uid, val) { localStorage.setItem(budgetKey(uid), JSON.stringify(val)); }
+  // ── Transactions ──
 
-  return { getTransactions, saveTransactions, getBudget, saveBudget };
+  /**
+   * Fetch all transactions for a user (one-time read)
+   */
+  async function getTransactions(uid) {
+    try {
+      const snap = await db.collection('users').doc(uid)
+        .collection('transactions')
+        .orderBy('date', 'desc')
+        .get();
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.error('Failed to fetch transactions:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Save (create or update) a single transaction
+   */
+  async function saveTransaction(uid, txn) {
+    try {
+      const ref = db.collection('users').doc(uid)
+        .collection('transactions').doc(txn.id);
+      await ref.set({
+        title: txn.title,
+        amount: txn.amount,
+        type: txn.type,
+        category: txn.category,
+        date: txn.date,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (e) {
+      console.error('Failed to save transaction:', e);
+    }
+  }
+
+  /**
+   * Delete a single transaction
+   */
+  async function deleteTransaction(uid, txnId) {
+    try {
+      await db.collection('users').doc(uid)
+        .collection('transactions').doc(txnId)
+        .delete();
+    } catch (e) {
+      console.error('Failed to delete transaction:', e);
+    }
+  }
+
+  /**
+   * Listen to transactions in real-time for cross-device sync
+   * @returns {Function} unsubscribe
+   */
+  function listenTransactions(uid, callback) {
+    return db.collection('users').doc(uid)
+      .collection('transactions')
+      .orderBy('date', 'desc')
+      .onSnapshot(snap => {
+        const txns = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        callback(txns);
+      }, err => {
+        console.error('Transaction listener error:', err);
+      });
+  }
+
+  // ── Budget ──
+
+  /**
+   * Fetch budget (one-time read)
+   */
+  async function getBudget(uid) {
+    try {
+      const doc = await db.collection('users').doc(uid)
+        .collection('budget').doc('current')
+        .get();
+      return doc.exists ? (doc.data().amount || 0) : 0;
+    } catch (e) {
+      console.error('Failed to fetch budget:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Save budget amount
+   */
+  async function saveBudget(uid, amount) {
+    try {
+      await db.collection('users').doc(uid)
+        .collection('budget').doc('current')
+        .set({
+          amount: amount,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } catch (e) {
+      console.error('Failed to save budget:', e);
+    }
+  }
+
+  /**
+   * Listen to budget in real-time
+   * @returns {Function} unsubscribe
+   */
+  function listenBudget(uid, callback) {
+    return db.collection('users').doc(uid)
+      .collection('budget').doc('current')
+      .onSnapshot(doc => {
+        const amount = doc.exists ? (doc.data().amount || 0) : 0;
+        callback(amount);
+      }, err => {
+        console.error('Budget listener error:', err);
+      });
+  }
+
+  return {
+    getTransactions, saveTransaction, deleteTransaction, listenTransactions,
+    getBudget, saveBudget, listenBudget
+  };
 })();

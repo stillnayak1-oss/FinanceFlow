@@ -1,59 +1,20 @@
 /* =============================================
-   FinanceFlow — Expense Tracker (Local Auth)
+   FinanceFlow — Expense Tracker (Firebase)
    ============================================= */
 let currentUser = null;
 let transactions = [];
 let budget = 0;
 let editingId = null;
 let pieChart = null, barChart = null, aPieChart = null, aBarChart = null;
-let isLoginMode = true;
+
+// Firestore listener unsubscribe handles
+let unsubTransactions = null;
+let unsubBudget = null;
 
 const $ = id => document.getElementById(id);
 const fmt = n => '₹' + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 
-// Backend API base URL (adjust if needed)
-const API_URL = 'http://localhost:3000';
-
-// Helper functions to interact with the MySQL API
-async function fetchTransactions(uid) {
-  const res = await fetch(`${API_URL}/transactions/${uid}`);
-  if (!res.ok) {
-    console.error('Failed to fetch transactions');
-    return [];
-  }
-  return await res.json();
-}
-
-async function saveTransactions(uid, txns) {
-  const res = await fetch(`${API_URL}/transactions/${uid}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(txns)
-  });
-  if (!res.ok) console.error('Failed to save transactions');
-  return res.ok;
-}
-
-async function fetchBudget(uid) {
-  const res = await fetch(`${API_URL}/budget/${uid}`);
-  if (!res.ok) {
-    console.error('Failed to fetch budget');
-    return 0;
-  }
-  const data = await res.json();
-  return data.amount ?? 0;
-}
-
-async function saveBudget(uid, amount) {
-  const res = await fetch(`${API_URL}/budget/${uid}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amount })
-  });
-  if (!res.ok) console.error('Failed to save budget');
-  return res.ok;
-}
 const catIcons = {
   Salary:'<i data-lucide="wallet" class="cat-lucide"></i>',
   Freelance:'<i data-lucide="laptop" class="cat-lucide"></i>',
@@ -114,17 +75,24 @@ function hideLoader() {
   setTimeout(() => appLoader.style.display = 'none', 400);
 }
 
-function handleGoogleCredential(response) {
-  const result = AuthService.googleLogin(response.credential);
+// Google sign-in via Firebase Auth popup
+async function handleGoogleLogin() {
+  const btn = $('google-signin-btn');
+  btn.disabled = true;
+  btn.querySelector('span').textContent = 'Signing in...';
+
+  const result = await AuthService.googleLogin();
   if (result.ok) {
-    showApp(result.user);
+    // Auth state listener in init() will call showApp
     toast('Signed in with Google!', 'success');
   } else {
-    toast('Google sign-in failed. Please try again.', 'error');
+    toast(result.error || 'Google sign-in failed. Please try again.', 'error');
+    btn.disabled = false;
+    btn.querySelector('span').textContent = 'Continue with Google';
   }
 }
 
-async function showApp(user) {
+function showApp(user) {
   currentUser = user;
   landingSection.style.display = 'none';
   authSection.style.display = 'none';
@@ -137,29 +105,28 @@ async function showApp(user) {
   } else {
     avatarEl.textContent = (user.name || user.email).charAt(0).toUpperCase();
   }
-  transactions = await fetchTransactions(user.uid);
-  budget = await fetchBudget(user.uid);
-  refreshAll();
-}
-  currentUser = user;
-  landingSection.style.display = 'none';
-  authSection.style.display = 'none';
-  appSection.style.display = 'block';
-  $('profile-name').textContent = user.name || 'User';
-  $('profile-email').textContent = user.email;
-  const avatarEl = $('profile-avatar-initial');
-  if (user.picture) {
-    avatarEl.innerHTML = `<img src="${user.picture}" alt="${user.name}" referrerpolicy="no-referrer" />`;
-  } else {
-    avatarEl.textContent = (user.name || user.email).charAt(0).toUpperCase();
-  }
-  transactions = DB.getTransactions(user.uid);
-  budget = DB.getBudget(user.uid);
-  refreshAll();
+
+  // Clean up any previous listeners
+  if (unsubTransactions) { unsubTransactions(); unsubTransactions = null; }
+  if (unsubBudget) { unsubBudget(); unsubBudget = null; }
+
+  // Set up real-time Firestore listeners for cross-device sync
+  unsubTransactions = DB.listenTransactions(user.uid, (txns) => {
+    transactions = txns;
+    refreshAll();
+  });
+
+  unsubBudget = DB.listenBudget(user.uid, (val) => {
+    budget = val;
+    refreshAll();
+  });
 }
 
 function showLanding() {
   currentUser = null;
+  // Clean up listeners on logout
+  if (unsubTransactions) { unsubTransactions(); unsubTransactions = null; }
+  if (unsubBudget) { unsubBudget(); unsubBudget = null; }
   appSection.style.display = 'none';
   authSection.style.display = 'none';
   landingSection.style.display = 'flex';
@@ -170,6 +137,12 @@ function showAuth() {
   appSection.style.display = 'none';
   landingSection.style.display = 'none';
   authSection.style.display = 'flex';
+  // Re-enable google button
+  const btn = $('google-signin-btn');
+  if (btn) {
+    btn.disabled = false;
+    btn.querySelector('span').textContent = 'Continue with Google';
+  }
 }
 
 if(landingThemeToggleBtn) landingThemeToggleBtn.addEventListener('click', toggleTheme);
@@ -177,17 +150,31 @@ if(landingSignupBtn) landingSignupBtn.addEventListener('click', () => showAuth()
 if(heroCtaBtn) heroCtaBtn.addEventListener('click', () => showAuth());
 if(authBackBtn) authBackBtn.addEventListener('click', () => showLanding());
 
-$('btn-logout').addEventListener('click', () => {
-  AuthService.logout(); sidebarProfile.classList.remove('open');
-  toast('Logged out successfully', 'info'); showLanding();
+// Google sign-in button click handler
+const googleSigninBtn = $('google-signin-btn');
+if (googleSigninBtn) googleSigninBtn.addEventListener('click', handleGoogleLogin);
+
+$('btn-logout').addEventListener('click', async () => {
+  await AuthService.logout();
+  sidebarProfile.classList.remove('open');
+  toast('Logged out successfully', 'info');
+  showLanding();
 });
 
 $('profile-dropdown-btn').addEventListener('click', (e) => { e.stopPropagation(); sidebarProfile.classList.toggle('open'); });
 document.addEventListener('click', (e) => { if (!sidebarProfile.contains(e.target)) sidebarProfile.classList.remove('open'); });
 
 // ===== DATA HELPERS =====
-async function saveData() { if (currentUser) await saveTransactions(currentUser.uid, transactions); }
-async function saveBudgetData() { if (currentUser) await saveBudget(currentUser.uid, budget); }
+async function saveData(txn) {
+  if (currentUser && txn) {
+    await DB.saveTransaction(currentUser.uid, txn);
+  }
+}
+async function saveBudgetData() {
+  if (currentUser) {
+    await DB.saveBudget(currentUser.uid, budget);
+  }
+}
 
 // ===== FORM VALIDATION =====
 function validate() {
@@ -202,17 +189,19 @@ function validate() {
 }
 
 // ===== TRANSACTIONS =====
-form.addEventListener('submit', (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!validate() || !currentUser) return;
   const txn = { id: editingId || genId(), title: $('txn-title').value.trim(), amount: parseFloat($('txn-amount').value), type: $('txn-type').value, category: $('txn-category').value, date: $('txn-date').value };
   if (editingId) {
-    const idx = transactions.findIndex(t => t.id === editingId);
-    if (idx > -1) transactions[idx] = txn;
     editingId = null; $('form-btn-text').textContent = 'Add Transaction'; $('form-cancel-btn').style.display = 'none';
     toast('Transaction updated!', 'success');
-  } else { transactions.unshift(txn); toast('Transaction added!', 'success'); }
-  saveData(); form.reset(); $('txn-date').value = new Date().toISOString().split('T')[0]; refreshAll();
+  } else {
+    toast('Transaction added!', 'success');
+  }
+  // Save to Firestore — the real-time listener will update the UI
+  await saveData(txn);
+  form.reset(); $('txn-date').value = new Date().toISOString().split('T')[0];
 });
 
 $('form-cancel-btn').addEventListener('click', () => {
@@ -230,7 +219,9 @@ function editTxn(id) {
 
 async function deleteTxn(id) {
   if (!await confirmDialog('Delete Transaction?', 'This action cannot be undone.')) return;
-  transactions = transactions.filter(t => t.id !== id); saveData(); refreshAll(); toast('Transaction deleted', 'warning');
+  // Delete from Firestore — the real-time listener will update the UI
+  await DB.deleteTransaction(currentUser.uid, id);
+  toast('Transaction deleted', 'warning');
 }
 
 function renderTxnItem(txn, showActions=true) {
@@ -322,11 +313,11 @@ function updateBudget() {
   cc.innerHTML=cl.map((l,i)=>{const p=(cats[l]/cm*100).toFixed(0);return`<div class="cat-bar-item"><div class="cat-bar-header"><span class="cat-bar-name"><span class="cat-bar-icon">${catIcons[l]||'<i data-lucide="package" class="cat-lucide"></i>'}</span> ${l}</span><span class="cat-bar-amount">${fmt(cats[l])}</span></div><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${p}%;background:${chartColors[i%chartColors.length]}"></div></div></div>`;}).join('');
 }
 
-$('budget-form').addEventListener('submit', (e) => {
+$('budget-form').addEventListener('submit', async (e) => {
   e.preventDefault(); if(!currentUser)return;
   const val=parseFloat($('budget-amount').value);
   if(isNaN(val)||val<=0){toast('Enter a valid budget amount','error');return;}
-  budget=val; saveBudgetData(); updateBudget(); toast('Budget saved!','success');
+  budget=val; await saveBudgetData(); updateBudget(); toast('Budget saved!','success');
 });
 
 function refreshAll(){updateSummary();renderRecent();renderAll();updateCharts();updateMonthlySummary();updateTopCategories();updateBudget();if(window.lucide)lucide.createIcons();}
@@ -364,9 +355,17 @@ $('export-csv').addEventListener('click',()=>{
 // ===== INIT =====
 (function init(){
   $('txn-date').value=new Date().toISOString().split('T')[0];
-  const session=AuthService.getSession();
-  if(session){showApp(session);toast('Welcome back, '+session.name+'!','success');}
-  else showLanding();
-  hideLoader();
+
+  // Use Firebase auth state listener for session management
+  AuthService.onAuthChange((user) => {
+    hideLoader();
+    if (user) {
+      showApp(user);
+      toast('Welcome back, ' + user.name + '!', 'success');
+    } else {
+      showLanding();
+    }
+  });
+
   if(window.lucide)lucide.createIcons();
 })();
